@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>UCC Storyboard - iPad Pen Optimization</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body { font-family: 'Arial', sans-serif; background: #f0f2f5; padding: 10px; margin: 0; }
+        .login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 2000; }
+        .login-box { background: white; padding: 40px; border-radius: 15px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        
+        .main-container { max-width: 850px; margin: 20px auto; background: white; padding: 25px; display: none; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        
+        .scene-card { border: 2px solid #2c3e50; border-radius: 12px; margin-bottom: 40px; padding: 20px; background: #ffffff; }
+        
+        /* 캔버스 영역 최적화 */
+        .canvas-wrapper { position: relative; width: 100%; margin-bottom: 15px; }
+        canvas { 
+            border: 2px solid #bdc3c7; 
+            background: #fafafa; 
+            width: 100%; 
+            height: 350px; /* 크기를 더 키웠습니다 */
+            cursor: crosshair;
+            touch-action: none; /* 아이패드 제스처 방지 */
+            display: block;
+            border-radius: 8px;
+        }
+        
+        .note-area { 
+            width: 100%; 
+            height: 120px; 
+            margin-top: 15px; 
+            background: #fff9c4; 
+            padding: 15px; 
+            box-sizing: border-box; 
+            font-size: 16px; 
+            border: 1px solid #ddd; 
+            border-radius: 8px;
+            line-height: 1.5;
+        }
+
+        .nav-buttons { 
+            position: sticky; 
+            top: 0; 
+            background: rgba(255,255,255,0.95); 
+            padding: 15px; 
+            display: flex; 
+            gap: 12px; 
+            border-bottom: 2px solid #3498db; 
+            z-index: 1500; 
+            margin-bottom: 20px; 
+            backdrop-filter: blur(5px);
+        }
+        
+        .btn { padding: 12px 24px; cursor: pointer; border: none; border-radius: 6px; font-weight: bold; font-size: 15px; }
+        .btn-primary { background: #3498db; color: white; }
+        .btn-success { background: #27ae60; color: white; }
+        .btn-clear { background: #e74c3c; color: white; margin-top: 10px; }
+        
+        h3 { color: #2c3e50; margin-top: 0; border-left: 5px solid #3498db; padding-left: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="loginSection" class="login-overlay">
+    <div class="login-box">
+        <h2 style="margin-bottom:20px;">UCC Storyboard Editor</h2>
+        <input type="text" id="groupID" placeholder="Enter Group ID" style="padding:15px; width:250px; font-size:16px; border:1px solid #ccc; border-radius:5px;"><br><br>
+        <button class="btn btn-primary" style="width:280px;" onclick="handleLogin()">Start Design</button>
+    </div>
+</div>
+
+<div id="mainContent" class="main-container">
+    <div class="nav-buttons">
+        <button class="btn btn-primary" onclick="saveProgress()">Save Progress</button>
+        <button class="btn btn-success" onclick="exportPDF()">Export to PDF</button>
+        <span id="displayGroupID" style="margin-left: auto; font-weight: bold; color: #2980b9;"></span>
+    </div>
+
+    <div id="storyboard-content">
+        <h1 style="text-align: center; color: #2c3e50;">Project Storyboard</h1>
+        <div id="scenes-container"></div>
+    </div>
+</div>
+
+<script>
+    const sceneTitles = ["Scene 1: Introduction", "Scene 2: Main Body 1", "Scene 3: Main Body 2", "Scene 4: Main Body 3", "Scene 5: Ending"];
+
+    function handleLogin() {
+        const id = document.getElementById('groupID').value;
+        if(id) {
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('mainContent').style.display = 'block';
+            document.getElementById('displayGroupID').innerText = "Group: " + id;
+            setupScenes();
+            loadProgress(id);
+        }
+    }
+
+    function setupScenes() {
+        const container = document.getElementById('scenes-container');
+        container.innerHTML = '';
+        sceneTitles.forEach((title, index) => {
+            const i = index + 1;
+            const card = document.createElement('div');
+            card.className = 'scene-card';
+            card.innerHTML = `
+                <h3>${title}</h3>
+                <div class="canvas-wrapper">
+                    <canvas id="canvas${i}"></canvas>
+                </div>
+                <button class="btn btn-clear" onclick="clearCanvas('canvas${i}')">Clear Sketch</button>
+                <div style="margin-top:20px;">
+                    <label><strong>📝 Production Note & Checklist:</strong></label>
+                    <textarea id="note${i}" class="note-area" placeholder="Acting, AI tools, Equipment, Subtitles, etc."></textarea>
+                </div>
+            `;
+            container.appendChild(card);
+            initCanvas('canvas'+i);
+        });
+    }
+
+    function initCanvas(id) {
+        const canvas = document.getElementById(id);
+        const ctx = canvas.getContext('2d');
+        
+        // 아이패드 레티나 디스플레이 고해상도 설정
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = canvas.offsetWidth * ratio;
+        canvas.height = 350 * ratio;
+        ctx.scale(ratio, ratio);
+
+        let drawing = false;
+
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        }
+
+        function start(e) {
+            // 캔버스 터치 시 텍스트 입력창 포커스 해제
+            document.activeElement.blur();
+            drawing = true;
+            const pos = getPos(e);
+            ctx.beginPath();
+            ctx.moveTo(pos.x, pos.y);
+            // 터치 이벤트 발생 시 스크롤 등 브라우저 기본 동작 완전히 차단
+            if (e.cancelable) e.preventDefault();
+        }
+
+        function move(e) {
+            if (!drawing) return;
+            const pos = getPos(e);
+            ctx.lineWidth = 2.5;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = '#2c3e50';
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            if (e.cancelable) e.preventDefault();
+        }
+
+        function stop() {
+            drawing = false;
+            ctx.closePath();
+        }
+
+        // 이벤트 리스너 등록
+        canvas.addEventListener('mousedown', start);
+        canvas.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', stop);
+
+        // 아이패드 펜슬 및 터치 지원 (passive: false가 중요)
+        canvas.addEventListener('touchstart', start, { passive: false });
+        canvas.addEventListener('touchmove', move, { passive: false });
+        canvas.addEventListener('touchend', stop, { passive: false });
+    }
+
+    function clearCanvas(id) {
+        const canvas = document.getElementById(id);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function saveProgress() {
+        const id = document.getElementById('groupID').value;
+        const data = {};
+        for(let i=1; i<=5; i++) {
+            data['note'+i] = document.getElementById('note'+i).value;
+            data['canvas'+i] = document.getElementById('canvas'+i).toDataURL();
+        }
+        localStorage.setItem('ucc_v2_' + id, JSON.stringify(data));
+        alert("Progress saved!");
+    }
+
+    function loadProgress(id) {
+        const saved = localStorage.getItem('ucc_v2_' + id);
+        if(saved) {
+            const data = JSON.parse(saved);
+            for(let i=1; i<=5; i++) {
+                if(data['note'+i]) document.getElementById('note'+i).value = data['note'+i];
+                if(data['canvas'+i]) {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.getElementById('canvas'+i);
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, canvas.width / (window.devicePixelRatio || 1), canvas.height / (window.devicePixelRatio || 1));
+                    }
+                    img.src = data['canvas'+i];
+                }
+            }
+        }
+    }
+
+    async function exportPDF() {
+        const { jsPDF } = window.jspdf;
+        const element = document.getElementById('storyboard-content');
+        
+        const canvasImage = await html2canvas(element, { 
+            scale: 2,
+            useCORS: true,
+            logging: false
+        });
+        
+        const imgData = canvasImage.toDataURL('image/png');
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const width = pdf.internal.pageSize.getWidth();
+        const height = (canvasImage.height * width) / canvasImage.width;
+        
+        pdf.addImage(imgData, 'PNG', 0, 0, width, height);
+        pdf.save(`Storyboard_${document.getElementById('groupID').value}.pdf`);
+    }
+</script>
+
+</body>
+</html>
